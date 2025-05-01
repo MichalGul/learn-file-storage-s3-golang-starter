@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
@@ -29,7 +30,6 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-
 	fmt.Println("uploading thumbnail for video", videoID, "by user", userID)
 
 	// TODO: implement the upload here
@@ -51,30 +51,34 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		respondWithError(w, http.StatusInternalServerError, "Could't parse file to bytes", err)
 		return
 	}
-	
-	video, err := cfg.db.GetVideo(videoID) 
+
+	video, err := cfg.db.GetVideo(videoID)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Error getting video from db", err)
 		return
 	}
-	if video.UserID != userID{
+	if video.UserID != userID {
 		respondWithError(w, http.StatusUnauthorized, "Logged user does not own video", err)
 		return
 	}
 
-	videoThumbnails[videoID] = thumbnail{
-		data: imageBytes,
-		mediaType: mediaType,
-	}
-	thumbnailURL := fmt.Sprintf("http://localhost:%s/api/thumbnails/%s", cfg.port, videoIDString)
-	video.ThumbnailURL = &thumbnailURL
+	// videoThumbnails[videoID] = thumbnail{
+	// 	data: imageBytes,
+	// 	mediaType: mediaType,
+	// }
+
+	// thumbnailURL := fmt.Sprintf("http://localhost:%s/api/thumbnails/%s", cfg.port, videoIDString)
+	// video.ThumbnailURL = &thumbnailURL
+
+	endodedImageData := base64.StdEncoding.EncodeToString(imageBytes)
+	dataURL := fmt.Sprintf("data:%s;base64,%s", mediaType, endodedImageData)
+	video.ThumbnailURL = &dataURL
 
 	updateErr := cfg.db.UpdateVideo(video)
 	if updateErr != nil {
 		respondWithError(w, http.StatusInternalServerError, "Error updating video", err)
 		return
 	}
-
 
 	respondWithJSON(w, http.StatusOK, video)
 }
