@@ -5,8 +5,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
-	"strings"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
@@ -46,6 +44,7 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	defer file.Close()
 
 	mediaType := header.Header.Get("Content-Type")
+
 	// imageBytes, err := io.ReadAll(file)
 	// if err != nil {
 	// 	respondWithError(w, http.StatusInternalServerError, "Could't parse file to bytes", err)
@@ -76,18 +75,11 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	// video.ThumbnailURL = &dataURL
 
 	// Store file on filesystem
-	var fileExtension string
 
-	parts := strings.Split(mediaType, "/")
-    if len(parts) == 2 {
-        fileExtension = parts[1]
-    } else {
-        fileExtension = "png" // Default extension if parsing fails
-    }
+	fileWebPath := createAssetPath(videoID, mediaType, cfg.assetsRoot)
+	fileDiskPath := cfg.getAssetDiskPath(fileWebPath)
+	newThumbnailFile, createErr := os.Create(fileDiskPath)
 
-	fileName := fmt.Sprintf("%s.%s", videoIDString, fileExtension)
-	filePath := filepath.Join(cfg.assetsRoot, fileName)
-	newThumbnailFile, createErr := os.Create(filePath)
 	if createErr != nil {
 		respondWithError(w, http.StatusInternalServerError, "error creating thumbnail file", createErr)
 		return
@@ -101,7 +93,7 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 
 	defer newThumbnailFile.Close()
 
-	thumbnailURL := fmt.Sprintf("/assets/%s.%s", videoID, fileExtension)
+	thumbnailURL := cfg.getAssetURL(fileWebPath)
 	video.ThumbnailURL = &thumbnailURL
 
 	updateErr := cfg.db.UpdateVideo(video)
