@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/google/uuid"
 )
 
 func (cfg apiConfig) ensureAssetsDir() error {
@@ -16,7 +15,7 @@ func (cfg apiConfig) ensureAssetsDir() error {
 	return nil
 }
 
-func createAssetPath(videoID uuid.UUID, mediaType string, assetsRoot string) string {
+func createAssetPath(videoID string, mediaType string, assetsRoot string) string {
 	var fileExtension string
 	parts := strings.Split(mediaType, "/")
 	if len(parts) == 2 {

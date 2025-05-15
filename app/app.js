@@ -252,6 +252,7 @@ let currentVideo = null;
 
 function viewVideo(video) {
   currentVideo = video;
+
   document.getElementById('video-display').style.display = 'block';
   document.getElementById('video-title-display').textContent = video.title;
   document.getElementById('video-description-display').textContent = video.description;
