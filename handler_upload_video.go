@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -14,9 +15,12 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
+	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/database"
 	"github.com/google/uuid"
 )
 
@@ -59,6 +63,20 @@ func getVideoAspectRatio(filePath string) (string, error) {
 	}
 	return "other", nil
 
+}
+
+func processVideoForFastStart(filePath string) (string, error) {
+	processedVideoPath := fmt.Sprintf("%s.processing", filePath)
+
+	cmd := exec.Command("ffmpeg", "-i", filePath, "-c", "copy", "-movflags", "faststart", "-f", "mp4", processedVideoPath)
+
+	err := cmd.Run()
+	if err != nil {
+		log.Print("error while running ffmpeg for faststart")
+		return "", err
+	}
+
+	return processedVideoPath, nil
 }
 
 func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request) {
@@ -134,36 +152,99 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Process video for fast start
+	fileName, err := processVideoForFastStart(tempFile.Name())
+	processedVideoFile, nil := os.Open(fileName)
+
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error encoding video for faststart", err)
+		return
+	}
+
 	// Generate random name for file
 	random_key := make([]byte, 32)
 	rand.Read(random_key)
-	fileName := hex.EncodeToString(random_key)
-	
-	if ratio == "16:9"{
+	fileName = hex.EncodeToString(random_key)
+
+	if ratio == "16:9" {
 		fileName = fmt.Sprintf("landscape/%s.%s", fileName, "mp4")
 
-	} else if ratio == "9:16"{
+	} else if ratio == "9:16" {
 		fileName = fmt.Sprintf("portrait/%s.%s", fileName, "mp4")
 	} else {
 		fileName = fmt.Sprintf("other/%s.%s", fileName, "mp4")
 	}
 
-
 	_, putError := cfg.s3Client.PutObject(r.Context(), &s3.PutObjectInput{
 		Bucket:      &cfg.s3Bucket,
 		Key:         &fileName,
-		Body:        tempFile, // The io.Reader (your *os.File)
+		Body:        processedVideoFile, // The io.Reader (your *os.File)
 		ContentType: &mediaType,
 	})
 
 	if putError != nil {
+		fmt.Printf("%v\n", putError)
 		respondWithError(w, http.StatusInternalServerError, "Error putting object to s3", err)
 		return
 	}
-	
-	s3VideoUrl := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", cfg.s3Bucket, cfg.s3Region, fileName)
+
+	// s3VideoUrl := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", cfg.s3Bucket, cfg.s3Region, fileName)
+	s3VideoUrl := fmt.Sprintf("%s,%s", cfg.s3Bucket, fileName)
 	video.VideoURL = &s3VideoUrl
 
 	cfg.db.UpdateVideo(video)
+
+	// After updating the video in the database, convert to signed URL format
+	signedVideo, err := cfg.dbVideoToSignedVideo(video)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, fmt.Sprintf("Couldn't generate presigned URL: %v", err), err)
+		return
+	}
+
+	respondWithJSON(w, http.StatusOK, signedVideo)
+
+}
+
+func (cfg *apiConfig) dbVideoToSignedVideo(video database.Video) (database.Video, error) {
+
+	if video.VideoURL == nil {
+		return video, nil
+	}
+	videoUrlParts := strings.Split(*video.VideoURL, ",")
+
+	bucket := videoUrlParts[0]
+	key := videoUrlParts[1]
+
+	presignedURL, err := generatePresignedURL(cfg.s3Client, bucket, key, time.Hour)
+	if err != nil {
+		log.Print("error while generating presigned url: %v", err)
+		return video, err
+	}
+
+	video.VideoURL = &presignedURL
+
+	return video, nil
+
+}
+
+// Helper function to convert a string to a string pointer
+func ptr(s string) *string {
+	return &s
+}
+
+func generatePresignedURL(s3Client *s3.Client, bucket, key string, expireTime time.Duration) (string, error) {
+
+	presignClient := s3.NewPresignClient(s3Client)
+	input := &s3.GetObjectInput{
+		Bucket: ptr(bucket),
+		Key:    ptr(key),
+	}
+	presignRequest, err := presignClient.PresignGetObject(context.Background(), input, s3.WithPresignExpires(expireTime))
+	if err != nil {
+		log.Print("error while generating presigned url: %v", err)
+		return "", err
+	}
+
+	return presignRequest.URL, nil
 
 }
